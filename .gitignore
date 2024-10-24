@@ -1,0 +1,28 @@
+# Исключаем директорию виртуальной среды
+venv/
+
+# Исключаем кэш pytest и временные файлы тестирования
+.pytest_cache/
+__pycache__/
+
+# Лог-файлы
+*.log
+app.log
+
+# Конфигурационные файлы системы или редакторов кода
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+.vscode/
+.idea/
+*.iml
+
+# Файлы токенов и OAuth
+.env/
+client_secret.json
+creds.json
+
+# Исключаем кэшированные данные Google API
+*.cache
