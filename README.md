@@ -1,129 +1,106 @@
 
 
-Google Calendar App
-=====================
+# Google Calendar Compact Version
 
-This project is a Python application for interacting with Google Calendar via the Google API. It allows you to manage calendars and events programmatically using a server-side solution.
+## Описание проекта
 
-### Requirements
+Данный проект на Python взаимодействует с Google Calendar через Google API. Программа позволяет управлять календарями и событиями с помощью автоматической авторизации через OAuth.
 
-* Python 3.9.2
-* Google API Client Libraries
-* `client_secret.json` and `creds.json` files for Google OAuth
+## Структура проекта
 
-### Project Structure
-
-```markdown
-├── auth/
-│   ├── __init__.py
-│   └── gapiworkspace.py
-├── event/
-│   ├── __init__.py
-│   └── gevent.py
-├── gcalendar/
-│   ├── __init__.py
-│   └── gcalendar.py
-├── scripts/
-│   ├── run.sh
-│   └── setup.sh
-├── tests/
-|   ├── __init__.py
-|   ├── conftest.py
-|   ├── test_gaipworkspace.py
-|   ├── test_gcalendar.py
-|   └── test_gevent.py
-├── venv/  # Virtual environment directory
-├── main.py
-├── conf.py  # Configuration file
-├── app.log
-├── requirements.txt
-├── README.md
-└── .env/  # Directory for your OAuth credentials
-    ├── client_secret.json
-    └── creds.json
+```
+├── client_secret.json      # OAuth файл клиента Google API
+├── creds.json              # Файл для хранения токенов авторизации Google API
+├── main.py                 # Основной файл программы
+├── README.md               # Документация проекта
+├── requirements.txt        # Список зависимостей Python проекта
+├── setup.sh                # Скрипт для настройки окружения
+└── scripts/
+    └── setup.sh            # Скрипт автоматической установки Python и зависимостей
 ```
 
-### Setup Instructions
+## Предварительные требования
 
-#### Step 1: Clone the repository
+* Python 3.9.2+
+* Аккаунт Google с доступом к Google Calendar API
+* Установленный Google Cloud проект с включённым Google Calendar API
 
-First, clone this repository to your local machine:
+## Установка и запуск проекта
 
-```bash
-git clone https://your-repository-url
-cd google-calendar-app
+### Вариант 1: Установка вручную
+
+1. Клонирование репозитория:
+   ```bash
+git clone <URL вашего репозитория>
+cd <название вашего проекта>
 ```
-
-#### Step 2: Setup Python Virtual Environment
-
-If you haven't created a virtual environment yet, you can do so using the following command:
-
-```bash
+2. Создание и активация виртуального окружения (необязательно):
+   * Для Windows:
+     ```bash
 python -m venv venv
-```
-
-Activate the virtual environment:
-
-**Windows:**
-
-```bash
 .\venv\Scripts\activate
 ```
-
-**Linux/macOS:**
-
-```bash
+   * Для Linux/macOS:
+     ```bash
+python3 -m venv venv
 source venv/bin/activate
 ```
-
-#### Step 3: Install Dependencies
-
-Once inside the virtual environment, run the following script to install the required Python packages:
-
-```bash
-./scripts/setup.sh
+3. Установка зависимостей:
+   ```bash
+pip install -r requirements.txt
+```
+4. Настройка OAuth 2.0:
+   * Создайте проект в Google Cloud Console.
+   * Включите API Google Calendar для вашего проекта.
+   * Создайте OAuth 2.0 идентификатор клиента.
+   * Скачайте файл `client_secret.json` и поместите его в корень проекта.
+5. Запуск приложения:
+   ```bash
+python main.py
 ```
 
-#### Step 4: Set Executable Permissions (For Linux/macOS)
+### Вариант 2: Использование `setup.sh` для автоматической установки
 
-Make the `setup.sh` script executable by running the following command:
+Скрипт `setup.sh`, расположенный в корне проекта, автоматически установит необходимую версию Python и все зависимости. Он также создаст виртуальное окружение и активирует его. Используйте этот скрипт для быстрого разворачивания проекта.
 
-```bash
-chmod +x scripts/setup.sh
+1. Запуск скрипта `setup.sh`:
+   ```bash
+bash scripts/setup.sh
+```
+2. Скрипт выполнит следующие шаги:
+   * Установит Python 3.9.2 (если он не установлен).
+   * Создаст виртуальное окружение.
+   * Установит необходимые зависимости через pip.
+   * Подскажет, как запустить проект после завершения установки.
+3. Запуск проекта:
+   ```bash
+source venv/bin/activate && python main.py
 ```
 
-#### Step 5: Running the Application
+## Основные функции программы
 
-You can now run the application by executing the `run.sh` script:
+* Создание календарей:
+  Программа создаёт несколько календарей с помощью функции `create_calendars()`. Она создаёт календари "Work Calendar" и "Personal Calendar".
+* Выбор и редактирование календаря:
+  Выбор календаря по его имени с помощью функции `select_and_edit_calendar()`. После выбора календарь редактируется.
+* Создание и редактирование события:
+  Создание события с помощью функции `create_and_edit_event()`, после чего событие редактируется.
+* Удаление календарей:
+  Все созданные календари удаляются через функцию `delete_calendars()`.
 
-```bash
-./scripts/run.sh
-```
+## Файл `setup.sh`
 
-This script will:
+Скрипт `setup.sh`, расположенный в папке `scripts`, автоматически выполняет следующие действия:
 
-* Install any required dependencies using `setup.sh`.
-* Run the `main.py` file, which interacts with Google Calendar.
+* Устанавливает Python 3.9.2 (если не установлен).
+* Создаёт и активирует виртуальное окружение.
+* Устанавливает зависимости через pip.
+* Сообщает, как запустить проект.
 
-### Environment Variables and OAuth Setup
+## Логи
 
-Ensure that you have the following files in your `.env/` directory:
+Логи приложения сохраняются в файл `app.log` в корне проекта. Логи позволяют отслеживать выполнение программы и выявлять ошибки.
 
-* `client_secret.json`: This file contains your Google OAuth credentials.
-* `creds.json`: This file will store the token information after your first authentication.
+## Возможные ошибки
 
-### Testing
-
-To run the tests, you can use the following command:
-
-```bash
-pytest
-```
-
-### Log Files
-
-Logs from the application will be written to the `app.log` file, located in the project root.
-
-### License
-
-Apache License, Version 2.0
+* OAuth Error: Если файл `client_secret.json` отсутствует или неправильно настроен, программа выдаст ошибку при попытке аут

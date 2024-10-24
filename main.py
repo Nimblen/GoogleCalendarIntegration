@@ -1,18 +1,318 @@
 import json
 import logging
-from auth.gapiworkspace import GAPIWorkspace
-from gcalendar.gcalendar import GCalendar
-from event.gevent import GEvent
+import os
+from typing import Optional, Dict
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
 
-import conf  # Импорт базовой конфигурации логирования
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    encoding="UTF-8",
+    handlers=[logging.FileHandler("app.log"), logging.StreamHandler()],
+)
+
 
 logger = logging.getLogger(__name__)
+
+
+
+
+class GAPIWorkspace:
+    def __init__(self, IDuserOAuth: Dict, filename: Optional[str] = None):
+        """Авторизация через Google API с использованием OAuth."""
+        self.creds: Optional[Credentials] = None
+        self.filename: Optional[str] = filename
+
+        logger.info("Initializing GAPIWorkspace")
+
+        # Если файл с токенами существует, загружаем токены
+        if filename and os.path.exists(filename):
+            self.creds = Credentials.from_authorized_user_file(filename)
+            logger.info("Loaded credentials from file")
+
+        # Если токены недействительны или их нет, запускаем процесс авторизации
+        if not self.creds or not self.creds.valid:
+            if self.creds and self.creds.expired and self.creds.refresh_token:
+                logger.info("Token expired, refreshing")
+                self.creds.refresh(Request())
+            else:
+                logger.info("No valid credentials found, starting OAuth flow")
+                flow = InstalledAppFlow.from_client_config(
+                    IDuserOAuth, ["https://www.googleapis.com/auth/calendar"]
+                )
+                self.creds = flow.run_local_server(port=8000)
+
+            # Сохраняем токены, если файл указан
+            if filename:
+                with open(filename, "w") as token_file:
+                    token_file.write(self.creds.to_json())
+                    logger.info(f"Saved credentials to {filename}")
+
+    def get_credentials(self) -> Optional[Credentials]:
+        """Возвращает авторизационные данные."""
+        logger.info("Returning credentials")
+        return self.creds
+
+
+
+
+
+
+
+
+class GCalendar:
+    def __init__(self, gapi_workspace):
+        """Инициализация сервиса Google Calendar."""
+        self.service = build(
+            "calendar", "v3", credentials=gapi_workspace.get_credentials()
+        )
+        self.data = None
+        self.error = None
+        logger.info("GCalendar initialized")
+
+    def create(self, data: dict):
+        """Создание нового календаря."""
+        try:
+            logger.info(f"Creating calendar: {data.get('name', 'New Calendar')}")
+            calendar = {
+                "summary": data.get("name", "New Calendar"),
+                "description": data.get("description", ""),
+                "timeZone": data.get("timezone", "GMT+02:00"),
+            }
+            calendar_entry = self.service.calendars().insert(body=calendar).execute()
+            self.data = calendar_entry
+            logger.info(f"Calendar {calendar_entry['id']} successfully created")
+            return calendar_entry  # Возвращаем полный объект календаря
+        except Exception as e:
+            self.error = str(e)
+            logger.error(f"Error creating calendar: {e}")
+            return False
+
+    def delete(self, calendar_id: str):
+        """Удаление календаря по ID."""
+        try:
+            logger.info(f"Deleting calendar with id: {calendar_id}")
+            self.service.calendars().delete(calendarId=calendar_id).execute()
+            self.data = None
+            logger.info(f"Calendar {calendar_id} successfully deleted")
+            return True
+        except Exception as e:
+            self.error = str(e)
+            logger.error(f"Error deleting calendar {calendar_id}: {e}")
+            return False
+
+    def select(self, data: dict):
+        """Выбор календаря по имени."""
+        try:
+            logger.info(f"Selecting calendar by name: {data.get('name')}")
+            calendars = self.service.calendarList().list().execute()
+            for calendar in calendars["items"]:
+                if data.get("name") == calendar["summary"]:
+                    self.data = calendar
+                    logger.info(f"Calendar {calendar['id']} selected")
+                    return calendar.get("id", False)
+            logger.warning(f"Calendar with name {data.get('name')} not found")
+            return False
+        except Exception as e:
+            self.error = str(e)
+            logger.error(f"Error selecting calendar: {e}")
+            return False
+
+    def edit(self, calendar_id: str, data: dict):
+        """Редактирование календаря."""
+        try:
+            logger.info(f"Editing calendar with id: {calendar_id}")
+            calendar = self.service.calendars().get(calendarId=calendar_id).execute()
+            calendar["summary"] = data.get("name", calendar["summary"])
+            calendar["description"] = data.get(
+                "description", calendar.get("description", "")
+            )
+            updated_calendar = (
+                self.service.calendars()
+                .update(calendarId=calendar_id, body=calendar)
+                .execute()
+            )
+            self.data = updated_calendar
+            logger.info(f"Calendar {calendar_id} successfully updated")
+            return updated_calendar
+        except Exception as e:
+            self.error = str(e)
+            logger.error(f"Error updating calendar {calendar_id}: {e}")
+            return False
+
+    def eventlist(self, calendar_id: str, data: dict):
+        """Получение списка событий."""
+        try:
+            logger.info(f"Retrieving event list for calendar {calendar_id}")
+            events_result = (
+                self.service.events()
+                .list(
+                    calendarId=calendar_id,
+                    timeMin=data["from"],
+                    timeMax=data.get("till", None),
+                    maxResults=data.get("limit", 10),
+                    singleEvents=True,
+                    orderBy="startTime",
+                )
+                .execute()
+            )
+            events = events_result.get("items", [])
+            logger.info(f"Found {len(events)} events for calendar {calendar_id}")
+            return events
+        except Exception as e:
+            self.error = str(e)
+            logger.error(f"Error retrieving event list for calendar {calendar_id}: {e}")
+            return []
+
+    def get(self, calendar_id: str):
+        """Получение информации о календаре по ID."""
+        try:
+            logger.info(f"Retrieving information for calendar {calendar_id}")
+            calendar = self.service.calendars().get(calendarId=calendar_id).execute()
+            self.data = calendar
+            logger.info(
+                f"Information for calendar {calendar_id} successfully retrieved"
+            )
+            return self.data
+        except Exception as e:
+            self.error = str(e)
+            logger.error(
+                f"Error retrieving information for calendar {calendar_id}: {e}"
+            )
+            return False
+
+
+
+
+
+
+
+
+
+class GEvent:
+    def __init__(self, gcalendar):
+        """Инициализация работы с событиями в Google Calendar."""
+        self.service = gcalendar.service
+        self.data = None
+        self.error = None
+        logger.info("GEvent initialized")
+
+    def create(self, calendar_id: str, event_data: dict):
+        """Создание нового события."""
+        try:
+            logger.info(f"Creating event: {event_data.get('name', 'New Event')}")
+            event = {
+                "summary": event_data.get("name", "New Event"),
+                "description": event_data.get("description", ""),
+                "start": {
+                    "dateTime": event_data.get("start_time"),
+                    "timeZone": event_data.get("timezone", "GMT+02:00"),
+                },
+                "end": {
+                    "dateTime": event_data.get("end_time"),
+                    "timeZone": event_data.get("timezone", "GMT+02:00"),
+                },
+                "reminders": {
+                    "useDefault": False,
+                    "overrides": [
+                        {"method": alarm["type"], "minutes": int(alarm["time"])}
+                        for alarm in event_data.get("alarm", [])
+                    ],
+                },
+            }
+            event_entry = (
+                self.service.events()
+                .insert(calendarId=calendar_id, body=event)
+                .execute()
+            )
+            self.data = event_entry
+            logger.info(f"Event {event_entry['id']} successfully created")
+            return event_entry  # Возвращаем объект события
+        except Exception as e:
+            self.error = str(e)
+            logger.error(f"Error creating event: {e}")
+            return False
+
+    def delete(self, calendar_id: str, event_id: str):
+        """Удаление события по ID."""
+        try:
+            logger.info(
+                f"Deleting event with id: {event_id} from calendar {calendar_id}"
+            )
+            self.service.events().delete(
+                calendarId=calendar_id, eventId=event_id
+            ).execute()
+            self.data = None
+            logger.info(f"Event {event_id} successfully deleted")
+            return True
+        except Exception as e:
+            self.error = str(e)
+            logger.error(f"Error deleting event {event_id}: {e}")
+            return False
+
+    def select(self, calendar_id: str, data: dict):
+        """Поиск события по имени."""
+        try:
+            logger.info(f"Selecting event by name: {data.get('name')}")
+            events = self.service.events().list(calendarId=calendar_id).execute()
+            for event in events["items"]:
+                if data.get("name") in event["summary"]:
+                    self.data = event
+                    logger.info(f"Event {event['id']} selected")
+                    return event.get("id", False)
+            logger.warning(f"Event with name {data.get('name')} not found")
+            return False
+        except Exception as e:
+            self.error = str(e)
+            logger.error(f"Error selecting event: {e}")
+            return False
+
+    def edit(self, calendar_id: str, event_id: str, event_data: dict):
+        """Редактирование события."""
+        try:
+            logger.info(f"Editing event with id: {event_id}")
+            event = (
+                self.service.events()
+                .get(calendarId=calendar_id, eventId=event_id)
+                .execute()
+            )
+            event["summary"] = event_data.get("name", event["summary"])
+            event["description"] = event_data.get(
+                "description", event.get("description", "")
+            )
+            updated_event = (
+                self.service.events()
+                .update(calendarId=calendar_id, eventId=event_id, body=event)
+                .execute()
+            )
+            self.data = updated_event
+            logger.info(f"Event {event_id} successfully updated")
+            return updated_event
+        except Exception as e:
+            self.error = str(e)
+            logger.error(f"Error editing event {event_id}: {e}")
+            return False
+
+
+
+
+
+
+
+
+
+# Использование Google API
+
 
 
 def load_oauth_credentials():
     """Загрузка данных OAuth из файла client_secret.json"""
     try:
-        with open(".env/client_secret.json") as f:
+        with open("./client_secret.json") as f:
             return json.load(f)
     except FileNotFoundError:
         logger.error("OAuth credentials file not found.")
@@ -22,7 +322,7 @@ def load_oauth_credentials():
 def initialize_gapi():
     """Инициализация авторизации через Google API"""
     IDuserOAuth = load_oauth_credentials()
-    credsfile = ".env/creds.json"
+    credsfile = "./creds.json"
     return GAPIWorkspace(IDuserOAuth, filename=credsfile)
 
 
@@ -54,7 +354,7 @@ def select_and_edit_calendar(calendar_service, calendar_name):
     """Выбор календаря по имени и его редактирование"""
     selected_calendar = calendar_service.select({"name": calendar_name})
     if selected_calendar:
-        logger.info(f"Selected calendar: {selected_calendar['id']}")
+        logger.info(f"Selected calendar: {selected_calendar}")
     else:
         logger.error(f"Calendar {calendar_name} not found")
         raise Exception("Calendar not found")
@@ -65,7 +365,7 @@ def select_and_edit_calendar(calendar_service, calendar_name):
         "description": f"Updated description for {calendar_name}",
         "timezone": "GMT+02:00",
     }
-    updated_calendar = calendar_service.edit(selected_calendar["id"], updated_data)
+    updated_calendar = calendar_service.edit(selected_calendar, updated_data)
     if updated_calendar:
         logger.info(f"Successfully updated calendar: {updated_calendar['id']}")
         return updated_calendar
