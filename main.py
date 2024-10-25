@@ -208,6 +208,7 @@ class GEvent:
             event = {
                 "summary": event_data.get("name", "New Event"),
                 "description": event_data.get("description", ""),
+                "colorId": event_data.get("color", ""),
                 "start": {
                     "dateTime": event_data.get("start_time"),
                     "timeZone": event_data.get("timezone", "GMT+02:00"),
@@ -326,25 +327,25 @@ def initialize_gapi():
     return GAPIWorkspace(IDuserOAuth, filename=credsfile)
 
 
-def create_calendars(calendar_service):
-    """Создание нескольких календарей"""
+def create_calendar(calendar_service):
+    """Создание календарей"""
     cal1_data = {
         "name": "Work Calendar",
         "description": "Calendar for work events",
         "timezone": "GMT+03:00",
     }
-    cal2_data = {
-        "name": "Personal Calendar",
-        "description": "Calendar for personal events",
-        "timezone": "GMT+03:00",
-    }
+    # cal2_data = {
+    #     "name": "Personal Calendar",
+    #     "description": "Calendar for personal events",
+    #     "timezone": "GMT+03:00",
+    # }
 
     cal1 = calendar_service.create(cal1_data)
-    cal2 = calendar_service.create(cal2_data)
+    # cal2 = calendar_service.create(cal2_data)
 
-    if cal1 and cal2:
-        logger.info(f"Successfully created calendars: {cal1['id']}, {cal2['id']}")
-        return cal1, cal2
+    if cal1: #and cal2:
+        logger.info(f"Successfully created calendars: {cal1['id']}")
+        return cal1
     else:
         logger.error("Failed to create one or more calendars")
         raise Exception("Calendar creation failed")
@@ -378,9 +379,10 @@ def create_and_edit_event(calendar_service, calendar_id):
     """Создание и редактирование события в календаре"""
     event_service = GEvent(calendar_service)
 
-    # Создание события
+    # Создание события  
     event_data = {
         "name": "Team Meeting",
+        "color": "5",
         "description": "Discuss project progress",
         "start_time": "2024-10-25T09:00:00+03:00",
         "end_time": "2024-10-25T10:00:00+03:00",
@@ -426,18 +428,25 @@ def main():
         # Инициализация Google API
         gapi_workspace = initialize_gapi()
         calendar_service = GCalendar(gapi_workspace)
+        calendars = calendar_service.service.calendarList().list().execute().get("items") # получение всех календарей
+        logger.info(f"количество календарей: {len(calendars)}")
+
+        # удаление всех календарей, которые можно удалить 
+        # for calendar in calendars:
+        #     if not calendar.get("primary", False) and calendar.get("accessRole") == "owner":
+        #         delete_calendars(calendar_service, [calendar])
 
         # Шаг 1: Создание нескольких календарей
-        cal1, cal2 = create_calendars(calendar_service)
+        cal1 = create_calendar(calendar_service)
 
         # Шаг 2: Выбор и редактирование календаря
         updated_calendar = select_and_edit_calendar(calendar_service, "Work Calendar")
 
-        # Шаг 3: Создание и редактирование события
+        # # Шаг 3: Создание и редактирование события
         updated_event = create_and_edit_event(calendar_service, updated_calendar["id"])
 
-        # Шаг 4: Удаление всех календарей
-        delete_calendars(calendar_service, [cal1, cal2])
+        # Шаг 4: Удаление календарей
+        # delete_calendars(calendar_service, [cal1])
 
     except Exception as e:
         logger.error(f"An error occurred: {str(e)}")
