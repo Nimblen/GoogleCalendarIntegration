@@ -50,8 +50,8 @@ This project is a Python application for interacting with Google Calendar via th
 First, clone this repository to your local machine:
 
 ```bash
-git clone https://your-repository-url
-cd google-calendar-app
+git clone https://github.com/Nimblen/GoogleCalendarIntegration.git
+cd GoogleCalendarIntegration
 ```
 
 #### Step 2: Setup Python Virtual Environment
