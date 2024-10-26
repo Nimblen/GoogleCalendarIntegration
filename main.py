@@ -6,6 +6,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 
 logging.basicConfig(
@@ -17,8 +18,6 @@ logging.basicConfig(
 
 
 logger = logging.getLogger(__name__)
-
-
 
 
 class GAPIWorkspace:
@@ -58,12 +57,6 @@ class GAPIWorkspace:
         return self.creds
 
 
-
-
-
-
-
-
 class GCalendar:
     def __init__(self, gapi_workspace):
         """Инициализация сервиса Google Calendar."""
@@ -86,6 +79,13 @@ class GCalendar:
             calendar_entry = self.service.calendars().insert(body=calendar).execute()
             self.data = calendar_entry
             logger.info(f"Calendar {calendar_entry['id']} successfully created")
+
+            # Предоставляем полный доступ каждому email из списка 'share'
+            share_emails = data.get("share", [])
+            share_role = data.get("role", "owner")
+            for email in share_emails:
+                self.share(calendar_entry["id"], email, share_role)
+
             return calendar_entry  # Возвращаем полный объект календаря
         except Exception as e:
             self.error = str(e)
@@ -131,6 +131,7 @@ class GCalendar:
             calendar["description"] = data.get(
                 "description", calendar.get("description", "")
             )
+            share_role = data.get("shareRole", "owner")
             updated_calendar = (
                 self.service.calendars()
                 .update(calendarId=calendar_id, body=calendar)
@@ -138,6 +139,12 @@ class GCalendar:
             )
             self.data = updated_calendar
             logger.info(f"Calendar {calendar_id} successfully updated")
+
+            # Предоставляем полный доступ каждому email из списка 'share'
+            share_emails = data.get("share", [])
+            for email in share_emails:
+                self.share(calendar_id, email, share_role)
+
             return updated_calendar
         except Exception as e:
             self.error = str(e)
@@ -185,12 +192,44 @@ class GCalendar:
             )
             return False
 
+    def share(self, calendar_id: str, email: str, role: str = "owner"):
+        """
+        Делится доступом к календарю с указанным email.
 
+        :param calendar_id: ID календаря, которым делятся.
+        :param email: Email пользователя, которому предоставляется доступ.
+        :param role: Уровень доступа ("reader", "writer", "owner"). По умолчанию "owner".
+        """
+        try:
+            logger.info(f"Sharing calendar {calendar_id} with {email}, role: {role}")
+            rule = {
+                "scope": {
+                    "type": "user",
+                    "value": email,
+                },
+                "role": role,
+            }
+            
+            # Проверка существующего правила для пользователя
+            try:
+                existing_rule = self.service.acl().get(calendarId=calendar_id, ruleId=f"user:{email}").execute()
+                # Обновляем, если уже существует
+                existing_rule['role'] = role
+                acl_rule = self.service.acl().update(calendarId=calendar_id, ruleId=existing_rule['id'], body=existing_rule).execute()
+                logger.info(f"Updated existing ACL rule for {email} on calendar {calendar_id}.")
+            except HttpError as e:
+                # Добавляем новое правило, если не найдено
+                if e.resp.status == 404:  # правило не найдено
+                    acl_rule = self.service.acl().insert(calendarId=calendar_id, body=rule).execute()
+                    logger.info(f"Inserted new ACL rule for {email} on calendar {calendar_id}.")
+                else:
+                    raise  # если ошибка не 404, пробрасываем исключение
 
-
-
-
-
+            return acl_rule
+        except Exception as e:
+            self.error = str(e)
+            logger.error(f"Error sharing calendar {calendar_id} with {email}: {e}")
+            return False
 
 
 class GEvent:
@@ -299,15 +338,7 @@ class GEvent:
             return False
 
 
-
-
-
-
-
-
-
 # Использование Google API
-
 
 
 def load_oauth_credentials():
@@ -330,9 +361,10 @@ def initialize_gapi():
 def create_calendar(calendar_service):
     """Создание календарей"""
     cal1_data = {
-        "name": "Work Calendar",
+        "name": "Calendar 3",
         "description": "Calendar for work events",
         "timezone": "GMT+03:00",
+        "share": ["i.see@mail.ru"],
     }
     # cal2_data = {
     #     "name": "Personal Calendar",
@@ -343,7 +375,7 @@ def create_calendar(calendar_service):
     cal1 = calendar_service.create(cal1_data)
     # cal2 = calendar_service.create(cal2_data)
 
-    if cal1: #and cal2:
+    if cal1:  # and cal2:
         logger.info(f"Successfully created calendars: {cal1['id']}")
         return cal1
     else:
@@ -365,6 +397,8 @@ def select_and_edit_calendar(calendar_service, calendar_name):
         "name": "Updated " + calendar_name,
         "description": f"Updated description for {calendar_name}",
         "timezone": "GMT+02:00",
+        "share": ["i.see@mail.ru"],
+        "shareRole": "reader",
     }
     updated_calendar = calendar_service.edit(selected_calendar, updated_data)
     if updated_calendar:
@@ -379,7 +413,7 @@ def create_and_edit_event(calendar_service, calendar_id):
     """Создание и редактирование события в календаре"""
     event_service = GEvent(calendar_service)
 
-    # Создание события  
+    # Создание события
     event_data = {
         "name": "Team Meeting",
         "color": "5",
@@ -428,25 +462,27 @@ def main():
         # Инициализация Google API
         gapi_workspace = initialize_gapi()
         calendar_service = GCalendar(gapi_workspace)
-        calendars = calendar_service.service.calendarList().list().execute().get("items") # получение всех календарей
+        calendars = (
+            calendar_service.service.calendarList().list().execute().get("items")
+        )  # получение всех календарей
         logger.info(f"количество календарей: {len(calendars)}")
 
-        # удаление всех календарей, которые можно удалить 
+        # удаление всех календарей, которые можно удалить
         # for calendar in calendars:
         #     if not calendar.get("primary", False) and calendar.get("accessRole") == "owner":
         #         delete_calendars(calendar_service, [calendar])
 
-        # Шаг 1: Создание нескольких календарей
+        #Шаг 1: Создание нескольких календарей
         cal1 = create_calendar(calendar_service)
 
         # Шаг 2: Выбор и редактирование календаря
-        updated_calendar = select_and_edit_calendar(calendar_service, "Work Calendar")
+        updated_calendar = select_and_edit_calendar(calendar_service, cal1["summary"])
 
-        # # Шаг 3: Создание и редактирование события
+        # # # Шаг 3: Создание и редактирование события
         updated_event = create_and_edit_event(calendar_service, updated_calendar["id"])
 
         # Шаг 4: Удаление календарей
-        # delete_calendars(calendar_service, [cal1])
+        delete_calendars(calendar_service, [cal1])
 
     except Exception as e:
         logger.error(f"An error occurred: {str(e)}")
