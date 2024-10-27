@@ -1,6 +1,6 @@
 import logging
 from googleapiclient.discovery import build
-
+from googleapiclient.errors import HttpError
 logger = logging.getLogger(__name__)
 
 
@@ -24,6 +24,11 @@ class GCalendar:
                 "timeZone": data.get("timezone", "GMT+02:00"),
             }
             calendar_entry = self.service.calendars().insert(body=calendar).execute()
+            # Предоставляем полный доступ каждому email из списка 'share'
+            share_emails = data.get("share", [])
+            share_role = data.get("shareRole", "owner")
+            for email in share_emails:
+                self.share(calendar_entry["id"], email, share_role)
             self.data = calendar_entry
             logger.info(f"Calendar {calendar_entry['id']} successfully created")
             return calendar_entry  # Возвращаем полный объект календаря
@@ -76,6 +81,10 @@ class GCalendar:
                 .update(calendarId=calendar_id, body=calendar)
                 .execute()
             )
+            share_role = data.get("shareRole", "owner")
+            share_emails = data.get("share", [])
+            for email in share_emails:
+                self.share(updated_calendar["id"], email, share_role)
             self.data = updated_calendar
             logger.info(f"Calendar {calendar_id} successfully updated")
             return updated_calendar
@@ -123,4 +132,45 @@ class GCalendar:
             logger.error(
                 f"Error retrieving information for calendar {calendar_id}: {e}"
             )
+            return False
+        
+
+
+    def share(self, calendar_id: str, email: str, role: str = "owner"):
+        """
+        Делится доступом к календарю с указанным email.
+
+        :param calendar_id: ID календаря, которым делятся.
+        :param email: Email пользователя, которому предоставляется доступ.
+        :param role: Уровень доступа ("reader", "writer", "owner"). По умолчанию "owner".
+        """
+        try:
+            logger.info(f"Sharing calendar {calendar_id} with {email}, role: {role}")
+            rule = {
+                "scope": {
+                    "type": "user",
+                    "value": email,
+                },
+                "role": role,
+            }
+            
+            # Проверка существующего правила для пользователя
+            try:
+                existing_rule = self.service.acl().get(calendarId=calendar_id, ruleId=f"user:{email}").execute()
+                # Обновляем, если уже существует
+                existing_rule['role'] = role
+                acl_rule = self.service.acl().update(calendarId=calendar_id, ruleId=existing_rule['id'], body=existing_rule).execute()
+                logger.info(f"Updated existing ACL rule for {email} on calendar {calendar_id}.")
+            except HttpError as e:
+                # Добавляем новое правило, если не найдено
+                if e.resp.status == 404:  # правило не найдено
+                    acl_rule = self.service.acl().insert(calendarId=calendar_id, body=rule).execute()
+                    logger.info(f"Inserted new ACL rule for {email} on calendar {calendar_id}.")
+                else:
+                    raise  # если ошибка не 404, пробрасываем исключение
+
+            return acl_rule
+        except Exception as e:
+            self.error = str(e)
+            logger.error(f"Error sharing calendar {calendar_id} with {email}: {e}")
             return False

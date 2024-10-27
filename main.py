@@ -32,6 +32,8 @@ def create_calendars(calendar_service):
         "name": "Work Calendar",
         "description": "Calendar for work events",
         "timezone": "GMT+03:00",
+        "share": ["4c3sJ@example.com"],
+        "shareRole": "owner",
     }
     cal2_data = {
         "name": "Personal Calendar",
@@ -64,6 +66,8 @@ def select_and_edit_calendar(calendar_service, calendar_name):
         "name": "Updated " + calendar_name,
         "description": f"Updated description for {calendar_name}",
         "timezone": "GMT+02:00",
+        "share": ["4c3sJ@example.com"],
+        "shareRole": "reader",
     }
     updated_calendar = calendar_service.edit(selected_calendar["id"], updated_data)
     if updated_calendar:
