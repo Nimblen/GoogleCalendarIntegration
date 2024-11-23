@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import threading
+from flask import Flask, request
 from typing import Optional, Dict
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -18,6 +20,29 @@ logging.basicConfig(
 
 
 logger = logging.getLogger(__name__)
+
+
+
+app = Flask(__name__)
+auth_code = None 
+
+@app.route('/')
+def home():
+    return "Google OAuth Server is running!"
+
+@app.route('/oauth2callback')
+def oauth2callback():
+    """Route to handle OAuth2 redirect."""
+    global auth_code
+    auth_code = request.args.get('code')
+    return "Authorization successful! You can close this window."
+
+# Start Flask server in a separate thread
+def run_flask():
+    app.run(host="0.0.0.0", port=8000)
+
+server_thread = threading.Thread(target=run_flask, daemon=True)
+server_thread.start()
 
 
 class GAPIWorkspace:
@@ -43,7 +68,15 @@ class GAPIWorkspace:
                 flow = InstalledAppFlow.from_client_config(
                     IDuserOAuth, ["https://www.googleapis.com/auth/calendar"]
                 )
-                self.creds = flow.run_local_server(port=8000)
+                flow.redirect_uri = "https://6d4b-213-230-74-131.ngrok-free.app/oauth2callback"
+                auth_url, _ = flow.authorization_url(prompt='consent')
+                logger.info(f"Перейдите по этой ссылке для аутентификации: {auth_url}")
+                global auth_code
+                while not auth_code:
+                    pass
+
+                flow.fetch_token(code=auth_code)
+                self.creds = flow.credentials
 
             # Сохраняем токены, если файл указан
             if filename:
@@ -82,7 +115,7 @@ class GCalendar:
 
             # Предоставляем полный доступ каждому email из списка 'share'
             share_emails = data.get("share", [])
-            share_role = data.get("role", "owner")
+            share_role = data.get("shareRole", "owner")
             for email in share_emails:
                 self.share(calendar_entry["id"], email, share_role)
 
