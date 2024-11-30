@@ -23,66 +23,137 @@ logger = logging.getLogger(__name__)
 
 
 
-app = Flask(__name__)
-auth_code = None 
+class OAuthServer:
+    """Класс для управления сервером Flask для OAuth2 аутентификации."""
 
-@app.route('/')
-def home():
-    return "Google OAuth Server is running!"
+    def __init__(self, host="0.0.0.0", port=8000):
+        self.host = host
+        self.port = port
+        self.auth_code = None
+        self.auth_event = threading.Event()
 
-@app.route('/oauth2callback')
-def oauth2callback():
-    """Route to handle OAuth2 redirect."""
-    global auth_code
-    auth_code = request.args.get('code')
-    return "Authorization successful! You can close this window."
+    def create_app(self):
+        """Создаёт экземпляр Flask приложения."""
+        app = Flask(__name__)
 
-# Start Flask server in a separate thread
-def run_flask():
-    app.run(host="0.0.0.0", port=8000)
+        @app.route('/')
+        def home():
+            return "Google OAuth Server is running!"
 
-server_thread = threading.Thread(target=run_flask, daemon=True)
-server_thread.start()
+        @app.route('/oauth2callback')
+        def oauth2callback():
+            """Обрабатывает редирект с OAuth2."""
+            self.auth_code = request.args.get('code')
+            logger.info(f"Authorization code received: {self.auth_code}")
+            self.auth_event.set()  # Сигнализируем основному потоку
+            return "Authorization successful! You can close this window."
 
+        return app
+
+    def run(self):
+        """Запускает сервер Flask в отдельном потоке."""
+        from werkzeug.serving import make_server
+
+        app = self.create_app()
+        self.server = make_server(self.host, self.port, app)
+        self.thread = threading.Thread(target=self.server.serve_forever)
+        self.thread.start()
+        logger.info(f"Flask server started at http://{self.host}:{self.port}")
+
+    def stop(self):
+        if hasattr(self, 'server'):
+            self.server.shutdown()
+            if self.thread.is_alive():
+                self.thread.join()
+            logger.info("Flask server stopped.")
+
+    def wait_for_auth(self, timeout=120):
+        """Ожидает завершения аутентификации."""
+        if not self.auth_event.wait(timeout):
+            self.stop()
+            raise TimeoutError("Authorization timed out.")
+        return self.auth_code
 
 class GAPIWorkspace:
     def __init__(self, IDuserOAuth: Dict, filename: Optional[str] = None):
         """Авторизация через Google API с использованием OAuth."""
         self.creds: Optional[Credentials] = None
         self.filename: Optional[str] = filename
+        self.IDuserOAuth = IDuserOAuth
 
         logger.info("Initializing GAPIWorkspace")
 
-        # Если файл с токенами существует, загружаем токены
-        if filename and os.path.exists(filename):
-            self.creds = Credentials.from_authorized_user_file(filename)
-            logger.info("Loaded credentials from file")
 
-        # Если токены недействительны или их нет, запускаем процесс авторизации
+        if filename:
+            try:
+                self.load_credentials()
+            except Exception as e:
+                logger.error(f"Failed to load credentials: {e}")
+                self.authenticate()  
+
+
         if not self.creds or not self.creds.valid:
             if self.creds and self.creds.expired and self.creds.refresh_token:
-                logger.info("Token expired, refreshing")
-                self.creds.refresh(Request())
+                logger.info("Token expired, attempting to refresh")
+                try:
+                    self.creds.refresh(Request())
+                    self.save_credentials()
+                except Exception as e:
+                    logger.error(f"Failed to refresh token: {e}")
+                    self.authenticate()  
             else:
                 logger.info("No valid credentials found, starting OAuth flow")
+                self.authenticate()
+
+
+
+    def load_credentials(self):
+        """Загружает токены из файла."""
+        try:
+            if not self.filename or not os.path.exists(self.filename):
+                raise FileNotFoundError("Credentials file not found.")
+            self.creds = Credentials.from_authorized_user_file(self.filename)
+            logger.info("Loaded credentials from file")
+        except ValueError as e:
+            logger.error(f"Invalid credentials format: {e}")
+            raise RuntimeError("Credentials file is corrupted or invalid.")
+
+
+    def save_credentials(self):
+        """Сохраняет токены в файл."""
+        try:
+            with open(self.filename, "w") as token_file:
+                token_file.write(self.creds.to_json())
+            logger.info(f"Saved credentials to {self.filename}")
+        except Exception as e:
+            logger.error(f"Failed to save credentials: {e}")
+
+    def authenticate(self):
+        """Процесс OAuth авторизации."""
+        retries = 3
+        for attempt in range(retries):
+            try:
+                server = OAuthServer()
+                server.run()
                 flow = InstalledAppFlow.from_client_config(
-                    IDuserOAuth, ["https://www.googleapis.com/auth/calendar"]
+                    self.IDuserOAuth, ["https://www.googleapis.com/auth/calendar"]
                 )
-                flow.redirect_uri = "https://6d4b-213-230-74-131.ngrok-free.app/oauth2callback"
+                flow.redirect_uri = "https://d846-213-230-74-203.ngrok-free.app/oauth2callback"
                 auth_url, _ = flow.authorization_url(prompt='consent')
                 logger.info(f"Перейдите по этой ссылке для аутентификации: {auth_url}")
-                global auth_code
-                while not auth_code:
-                    pass
 
+                auth_code = server.wait_for_auth(timeout=120)
                 flow.fetch_token(code=auth_code)
                 self.creds = flow.credentials
-
-            # Сохраняем токены, если файл указан
-            if filename:
-                with open(filename, "w") as token_file:
-                    token_file.write(self.creds.to_json())
-                    logger.info(f"Saved credentials to {filename}")
+                self.save_credentials()
+                logger.info("Authentication successful!")
+                break
+            except TimeoutError:
+                logger.error(f"Attempt {attempt + 1}/{retries} failed: Authorization timed out.")
+            finally:
+                server.stop()
+        else:
+            raise RuntimeError("All attempts to authenticate have failed.")
 
     def get_credentials(self) -> Optional[Credentials]:
         """Возвращает авторизационные данные."""
